@@ -2,3 +2,5 @@
 __pycache__
 Downloaded_data
 allen_data
+.vscode
+.venv
