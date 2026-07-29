@@ -1,5 +1,8 @@
 # Byte-compiled / optimized / DLL files
 __pycache__
+*.pyc
+*.pyo
+*.pyd
 Downloaded_data
 allen_data
 .vscode
