@@ -12,7 +12,7 @@ from keras import layers, optimizers
 from keras.initializers import GlorotUniform, Orthogonal
 from xgboost import XGBClassifier
 from imblearn.under_sampling import RandomUnderSampler
-from load_fun import (
+from load_fcn import (
     bz_LoadBinary,
     fcn_load_pickle,
     load_channels_map,
