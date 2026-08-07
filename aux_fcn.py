@@ -1,10 +1,5 @@
-import scipy.io
-import pandas as pd
 import numpy as np
-import h5py
-import sys
 import os
-import math
 import pickle
 import matplotlib.style as mplstyle
 mplstyle.use('fast')
