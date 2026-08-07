@@ -9,3 +9,4 @@ allen_data
 .venv
 __pycache__/aux_fcn.cpython-39.pyc
 /__pycache__
+*.pyc
