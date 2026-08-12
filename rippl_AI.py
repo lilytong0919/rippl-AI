@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 import keras
 import os
-from aux_fcn import process_LFP,prediction_parser, get_predictions_index, middle_stamps,get_click_th, format_predictions,split_data, retraining_parser, save_model,get_performance
+from aux_fcn import prediction_parser, get_predictions_index, middle_stamps, get_click_th, format_predictions, split_data, retraining_parser, save_model, get_performance
+from proc_fcn import process_LFP
 
 # Detection functions
 
@@ -21,7 +22,7 @@ def predict(LFP,sf,d_sf=1250,arch='CNN1D',model_number=1,channels=np.arange(8),n
         LFP: (np.array: n_samples x n_channels). LFP_recorded data. Although there 
               are no restrictions in n_channels, some considerations should be taken into 
               account (see channels). Data does not need to be normalized, because it will 
-              be internally be z-scored (see aux_fcn.process_LFP())
+              be internally be z-scored (see proc_fcn.process_LFP())
         sf: (int) Original sampling frequency (in Hz)
 
     Optional inputs:
@@ -55,7 +56,7 @@ def predict(LFP,sf,d_sf=1250,arch='CNN1D',model_number=1,channels=np.arange(8),n
                   where 2nd and 3rd channelswill be an interpolation of SO and SP channels, and 
                   5th to 7th an interpolation of SP and SR channels.For tetrodes, organising 
                   channels according to their spatial profile is very convenient to assure best 
-                  performance. These interpolations are done using the function aux_fcn.interpolate_channels().
+                  performance. These interpolations are done using the function proc_fcn.interpolate_channels().
         new_model: Other re-trained model you want to use for detection. If you have used our re-train function 
               to adapt the optimized models to your own data (see rippl_AI.retrain() for more details),
               you can input the new_model here to use it to predict your events.

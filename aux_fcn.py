@@ -1,10 +1,5 @@
-import scipy.io
-import pandas as pd
 import numpy as np
-import h5py
-import sys
 import os
-import math
 import pickle
 import matplotlib.style as mplstyle
 mplstyle.use('fast')
@@ -17,6 +12,25 @@ from keras import layers, optimizers
 from keras.initializers import GlorotUniform, Orthogonal
 from xgboost import XGBClassifier
 from imblearn.under_sampling import RandomUnderSampler
+from load_fcn import (
+    bz_LoadBinary,
+    fcn_load_pickle,
+    load_channels_map,
+    load_data_fs,
+    load_info,
+    load_lab_data,
+    load_raw_data,
+    load_ripples,
+    loadChunk,
+    reformat_channels,
+)
+from proc_fcn import (
+    downsample_data,
+    generate_overlapping_windows,
+    interpolate_channels,
+    process_LFP,
+    z_score_normalization,
+)
 
 # Absolute path to the directory containing aux_fcn.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,332 +45,6 @@ def fcn_save_pickle(name,x):
     with open(name, 'wb') as handle:
             pickle.dump(x, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return 
-
-def fcn_load_pickle(name):
-    '''
-    [x] = fcn_load_pickle(name) loads the content of the pickle file to x
-    '''
-    with open(name, 'rb') as handle:
-            return( pickle.load(handle) )
-
-
-# Estas dos funciones están normalmente en bz_load_binary, se pueden mover allá
-def loadChunk(fid, nChannels, channels, nSamples, precision):
-    size = int(nChannels * nSamples * precision)
-    nSamples = int(nSamples)
-
-    data = fid.read(size)
-
-    # fromstring to read the data as int16
-    # reshape to give it the appropiate shape (nSamples x nChannels)
-    data = np.fromstring(data, dtype=np.int16).reshape(nSamples, len(channels))
-    data = data[:, channels]
-
-    return data
-
-def bz_LoadBinary(filename, nChannels, channels, sampleSize, verbose=False):
-
-    if (len(channels) > nChannels):
-        print("Cannot load specified channels (listed channel IDs inconsistent with total number of channels).")
-        return
-
-    #aqui iria CdE de filename
-    with open(filename, "rb") as f:
-        dataOffset = 0
-
-        # Determine total number of samples in file
-        fileStart = f.tell()
-        if verbose:
-            print("fileStart ", fileStart)
-        status = f.seek(0, 2) # Go to the end of the file
-        fileStop = f.tell()
-        f.seek(0, 0) # Back to the begining
-        if verbose:
-            print("fileStop ", fileStop)
-
-        # (floor in case all channels do not have the same number of samples)
-        maxNSamplesPerChannel = math.floor(((fileStop-fileStart)/nChannels/sampleSize))
-        nSamplesPerChannel = maxNSamplesPerChannel
-
-        # For large amounts of data, read chunk by chunk
-        maxSamplesPerChunk = 10000
-        nSamples = int(nSamplesPerChannel*nChannels)
-
-        if verbose:
-            print("nSamples ", nSamples)
-
-        if nSamples <= maxNSamplesPerChannel:
-            data = loadChunk(f, nChannels, channels, nSamples, sampleSize)
-        else:
-            # Determine chunk duration and number of chunks
-            nSamplesPerChunk = math.floor(maxSamplesPerChunk/nChannels)*nChannels
-            nChunks = math.floor(nSamples/nSamplesPerChunk)
-
-            if verbose:
-                print("nSamplesPerChannel ", nSamplesPerChannel)
-                print("nSamplesPerChunk ", nSamplesPerChunk)
-
-            # Preallocate memory
-            data = np.zeros((nSamplesPerChannel,len(channels)), dtype=np.int16)
-
-            if verbose:
-                print("size data ", np.size(data, 0))
-
-            # Read all chuncks
-            i = 0
-            for j in range(nChunks):
-                d = loadChunk(f, nChannels, channels, nSamplesPerChunk/nChannels, sampleSize)
-                m = np.size(d, 0)
-
-                if m == 0:
-                    break
-
-                data[i:i+m, :] = d
-                i = i+m
-
-            # If the data size is not a multiple of the chunk size, read the remainder
-            remainder = nSamples - nChunks*nSamplesPerChunk
-            if remainder != 0:
-                d = loadChunk(f, nChannels, channels, remainder/nChannels, sampleSize)
-                m = np.size(d, 0)
-
-                if m != 0:
-                    data[i:i+m, :] = d
-
-    return data
-
-# Functions used to load the raw LFP, select channels, load ripples, downsample and normalize
-def load_lab_data(path):
-    sf, expName, ref_channels, dead_channels = load_info(path)
-    channels_map = load_channels_map(path)
-    ripples=load_ripples(path)/sf
-    channels, shanks, ref_channels = reformat_channels(channels_map, ref_channels)
-    LFP = load_raw_data(path, expName, channels, verbose=True)
-    return(LFP,ripples)
-
-
-def load_info (path):
-    try:
-        mat = scipy.io.loadmat(os.path.join(path, "info.mat"))
-    except:
-        print("info.mat file does not exist.")
-        sys.exit()
-
-    sf = mat["fs"][0][0]
-    expName = mat["expName"][0]
-
-    ref_channels = {}
-    ref_channels["so"] = mat["so"][0]
-    ref_channels["pyr"] = mat["pyr"][0]
-    ref_channels["rad"] = mat["rad"][0]
-    ref_channels["slm"] = mat["slm"][0]
-
-
-    if len(mat["chDead"]) <= 0:
-        dead_channels = []
-    else:
-        dead_channels = [x-1 for x in (mat["chDead"][0]).astype(int)]
-
-    return sf, expName, ref_channels, dead_channels
-
-def load_ripples (path, verbose=False):
-    try:
-        dataset = pd.read_csv(os.path.join(path,"ripples.csv"), delimiter=' ', header=0, usecols = ["ripIni","ripEnd"])# "ripMiddle", "ripEnd", "type", "shank"])
-    except:
-        print(path+"ripples.csv file does not exist.")
-        sys.exit()
-
-    ripples = dataset.values
-    ripples = ripples[np.argsort(ripples, axis=0)[:, 0], :]
-    if verbose:
-        print("Loaded ripples: ", len(ripples))
-
-    return ripples
-
-def load_channels_map (path):
-    try:
-        dataset = pd.read_csv(path+"/mapsCh.csv", delimiter=' ', header=0)
-    except:
-        print("ripples.csv file does not exist.")
-        sys.exit()
-
-    channels_map = dataset.values
-
-    return channels_map
-
-def reformat_channels (channels_map, ref_channels):
-    channels = np.where(np.isnan(channels_map[:, 0]) == False, channels_map[:, 0], 0)
-    channels = [x-1 for x in (channels).astype(int)]
-
-    shanks = np.where(np.isnan(channels_map[:, 1]) == False, channels_map[:, 1], 0)
-    shanks = [x-1 for x in (shanks).astype(int)]
-
-    ref_channels["so"] = np.where(np.isnan(ref_channels["so"]) == False, ref_channels["so"], 0)
-    ref_channels["so"] = [x-1 for x in ref_channels["so"].astype(int)]
-    ref_channels["pyr"] = np.where(np.isnan(ref_channels["pyr"]) == False, ref_channels["pyr"], 0)
-    ref_channels["pyr"] = [x-1 for x in ref_channels["pyr"].astype(int)]
-    ref_channels["rad"] = np.where(np.isnan(ref_channels["rad"]) == False, ref_channels["rad"], 0)
-    ref_channels["rad"] = [x-1 for x in ref_channels["rad"].astype(int)]
-    ref_channels["slm"] = np.where(np.isnan(ref_channels["slm"]) == False, ref_channels["slm"], 0)
-    ref_channels["slm"] = [x-1 for x in ref_channels["slm"].astype(int)]
-
-    return channels, shanks, ref_channels
-
-def load_raw_data (path, expName, channels, verbose=False):
-    
-    # There is .dat file
-    is_dat = any([file.endswith(".dat") for file in os.listdir(path)])
-
-    # There is .eeg file
-    is_eeg = any([file.endswith(".eeg") for file in os.listdir(path)])
-    
-    # There is .mat file with the name of the last folder
-    is_mat = any([os.path.basename(os.path.normpath(path))+".mat" in file for file in os.listdir(path)])
-
-    if is_dat:
-        name_dat = os.listdir(path)[np.where([file.endswith(".dat") for file in os.listdir(path)])[0][0]]
-        if verbose:
-            print(path+"/"+name_dat)
-        data = bz_LoadBinary(path+"/"+name_dat, len(channels), channels, 2, verbose)
-
-    elif is_eeg:
-        name_eeg = os.listdir(path)[np.where([file.endswith(".eeg") for file in os.listdir(path)])[0][0]]
-        if verbose:
-            print(path+"/"+name_eeg)
-        data = bz_LoadBinary(path+"/"+name_eeg, len(channels), channels, 2, verbose)
-
-    elif is_mat:
-        folder = path + "/" + os.path.basename(os.path.normpath(path))+".mat"
-        if verbose:
-            print(folder)
-        try:
-            mat = scipy.io.loadmat(folder)
-            data = mat["fil"]
-        except:
-            mat = h5py.File(folder, 'r')
-            data = np.array(mat["fil"]).T
-    else:
-        print('Not data found')
-
-    return data
-
-
-def downsample_data (data, sf, d_sf):
-
-    # Dowsampling
-    if sf > d_sf:
-        downsampled_pts = np.linspace(0, data.shape[0]-1, int(np.round(data.shape[0]/sf*d_sf))).astype(int)
-        downsampled_data = data[downsampled_pts, :]
-
-    # Upsampling
-    elif sf < d_sf:
-        print(f"Original sampling rate below {d_sf} Hz!")
-        return None
-    
-    elif sf==d_sf:
-        print("No downsaple is required")
-        downsampled_data=data
-
-
-    # Change from int16 to float16 if necessary
-    # int16 ranges from -32,768 to 32,767
-    # float16 has ±65,504, with precision up to 0.0000000596046
-    if downsampled_data.dtype != 'float16':
-        downsampled_data = np.array(downsampled_data, dtype="float16")
-
-    return downsampled_data
-
-
-def z_score_normalization(data):
-    channels = range(np.shape(data)[1])
-
-    for channel in channels:
-        # Since data is in float16 type, we make it smaller to avoid overflows
-        # and then we restore it.
-        # Mean and std use float64 to have enough space
-        # Then we convert the data back to float16
-        dmax = np.amax(data[:, channel])
-        dmin = abs(np.amin(data[:, channel]))
-        dabs = dmax if dmax>dmin else dmin
-        m = np.mean(data[:, channel] / dmax, dtype='float64') * dmax
-        s = np.std(data[:, channel] / dmax, dtype='float64') * dmax
-        s = 1 if s == 0 else s # If std == 0, change it to 1, so data-mean = 0
-        data[:, channel] = ((data[:, channel] - m) / s).astype('float16')
-    
-    return data
-
-
-def load_data_fs(path, shank, verbose=False):
-    # Read info.mat
-    sf, expName, ref_channels, dead_channels = load_info(path)
-
-    #Read mapsCh.csv
-    channels_map = load_channels_map(path)
-
-    # Reformat channels into correct values
-    channels, shanks, ref_channels = reformat_channels(channels_map, ref_channels)
-    # Read .dat
-    data = load_raw_data(path, expName, channels, verbose=verbose)
-
-
-    return data, sf
-
-
-def generate_overlapping_windows(data, window_size, stride, sf):
-    window_pts = int(window_size * sf)
-    stride_pts = int(stride * sf)
-    r = range(0, data.shape[0], stride_pts)
-
-    new_data = np.empty((len(list(r)), window_pts, data.shape[1]))
-
-    cont = 0
-    for idx in r:
-        win = data[idx:idx+window_pts, :]
-
-        if (win.shape[0] < window_pts):
-            continue
-
-        new_data[cont,:,:]  = win
-
-        cont = cont+1
-
-    return new_data
-
-# Detection functions
-
-def process_LFP(LFP,sf,d_sf,channels):
-    
-    ''' 
-    def process_LFP(LFP,sf,d_sf,channels)
-
-    This function processes the LFP before calling the detection algorithm.
-    1. It extracts the desired channels from the original LFP, and interpolates where there is a value of -1.
-    2. Downsamples the LFP to d_sf Hz.
-    3. Normalizes each channel separately by z-scoring them.
-
-    Mandatory inputs:
-        LFP: 		(np.array: n_samples x n_channels) LFP recorded data.
-        sf: 		(int) Original sampling frequency (in Hz).
-        d_sf:		(int) Desired subsampling frequency (in Hz).
-        channels: 	(np.array: n_channels) Indicates which channels will the pre processing be applied to. Counting starts in 0. 
-                    If channels contains any -1, interpolation will be also applied. 
-                    See channels of rippl_AI.predict(), or aux_fcn.interpolate_channels() for more information.
-    Output:
-    -------
-        LFP_norm: normalized LFP (np.array: n_samples x len(channels)). It is undersampled to d_sf Hz, z-scored, 
-                    and transformed to used the channels specified in channels.
-    A Rubio, LCN 2023
-    '''
-    data=interpolate_channels(LFP,channels)
-    print(f'Downsampling data from {sf} to {d_sf} Hz...')
-    data = downsample_data(data, sf, d_sf)
-    print("Shape of downsampled data:",data.shape)
-
-    
-    print('Normalizing data...')
-    normalized_data=z_score_normalization(data)
-    return normalized_data
-
 
 def prediction_parser(LFP,arch='CNN1D',model_number=1,new_model=None,n_channels=None,n_timesteps=None):
     '''
@@ -684,23 +372,6 @@ def intersection_over_union(x, y):
 
 
 # Interpolation 
-def interpolate_channels(data, ch_map):
-    
-    interp_data = np.zeros((data.shape[0], len(ch_map)))
-    for idx, ch in enumerate(ch_map):
-        if ch>-1:
-            interp_data[:,idx] = data[:,ch]
-        else:
-            pre_ch_idx = np.where(np.array(ch_map[:idx])>-1)[0][-1]
-            pre_ch = ch_map[pre_ch_idx]
-            post_ch_idx = np.where(np.array(ch_map[idx+1:])>-1)[0][0]+idx+1
-            post_ch = ch_map[post_ch_idx]
-            ch_dist = post_ch_idx - pre_ch_idx
-            interp_data[:,idx] = data[:, pre_ch] + ((idx-pre_ch_idx)/ch_dist) * \
-                (data[:, post_ch] - data[:, pre_ch])
-    return interp_data
-
-# Retraining auxiliary functions
 def split_data(x,GT,window_dur=60,d_sf=1250,split=0.7):
     '''
     [x_test,y_test,x_train,y_train] = split_data(x,y,window_dur,d_sf,split)
