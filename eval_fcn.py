@@ -1,4 +1,5 @@
-# helper functions (copied from aux_fcn to avoid dependency issue)
+"""Functions for evaluating and visualizing ripple-detection performance."""
+
 import matplotlib.pyplot as plt
 import numpy as np
 
