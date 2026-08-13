@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 import keras
 import os
-from aux_fcn import prediction_parser, get_predictions_index, middle_stamps, get_click_th, format_predictions, split_data, retraining_parser, save_model, get_performance
+from aux_fcn import prediction_parser, get_predictions_index, middle_stamps, get_click_th, format_predictions, split_data, retraining_parser, save_model
+from eval_fcn import get_performance
 from proc_fcn import process_LFP
 
 # Detection functions
